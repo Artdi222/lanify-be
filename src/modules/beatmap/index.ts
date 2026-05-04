@@ -12,7 +12,7 @@ export const beatmapModule = new Elysia({ prefix: '/beatmaps' })
 
   // ── GET /beatmaps — list all (with pagination, grouped by set) ──────────
   .get(
-    '/',
+    '',
     async ({ query }) => {
       const page  = Math.max(1, Number(query.page  ?? 1));
       const limit = Math.min(100, Math.max(1, Number(query.limit ?? 10)));
@@ -275,7 +275,7 @@ export const beatmapModule = new Elysia({ prefix: '/beatmaps' })
 
   // ── POST /beatmaps — create beatmap metadata (admin only) ─────────────
   .post(
-    '/',
+    '',
     async ({ body, user, set }) => {
       if (user.role !== 'admin') {
         set.status = 403;

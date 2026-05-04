@@ -64,7 +64,7 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
 
   // ── POST /scores — submit a score (protected) ─────────────────────────
   .post(
-    '/',
+    '',
     async ({ body, user, set }) => {
       // Verify beatmap exists
       const [beatmap] = await db
