@@ -1,0 +1,39 @@
+{
+  "name": "lanify",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:push": "bunx drizzle-kit push",
+    "db:studio": "bunx drizzle-kit studio"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/bun": "latest",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@elysiajs/bearer": "^1.4.4",
+    "@elysiajs/cors": "^1.4.2",
+    "@elysiajs/jwt": "^1.4.2",
+    "@supabase/supabase-js": "^2.105.1",
+    "@types/jszip": "^3.4.1",
+    "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.28",
+    "jszip": "^3.10.1",
+    "lint": "^1.2.2",
+    "osu-classes": "^3.1.0",
+    "osu-mania-stable": "^5.0.1",
+    "osu-parsers": "^4.1.7",
+    "pg": "^8.20.0"
+  }
+}
