@@ -12,7 +12,9 @@ const port = Number(process.env.PORT) || 3000;
 const app = new Elysia()
   // ── Global plugins ────────────────────────────────────────────────────
   .use(cors({
-    origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : true
+    origin: process.env.FRONTEND_URL
+      ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+      : true
   }))
 
   // ── Global error handler ──────────────────────────────────────────────
