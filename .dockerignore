@@ -1,0 +1,13 @@
+node_modules
+.git
+.vscode
+.gitignore
+.env
+bun.lock
+bun.lockb
+npm-debug.log*
+Dockerfile
+.dockerignore
+drizzle
+drizzle.config.ts
+README.md

@@ -1,23 +1,155 @@
 import { Elysia, t } from 'elysia';
 import { eq, sql, desc, and, ne, or, ilike, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+import JSZip from 'jszip';
 import { db } from '../../db';
 import { beatmaps } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { getSignedUrl, deleteFile, uploadFile } from '../../storage/supabase';
 import { BeatmapParser } from '../../utils/beatmap-parser';
+import { LocalBeatmapScanner } from '../../utils/local-scanner';
 
 export const beatmapModule = new Elysia()
   .group('/beatmaps', (app) => app
+    // ── GET /beatmaps/local/bg — Stream local background image ─────────────
+    .get(
+      '/local/bg',
+      async ({ query, set }) => {
+        const id = query.id;
+        const localMap = await LocalBeatmapScanner.getById(id);
+        if (!localMap || !localMap.backgroundFilename) {
+          set.status = 404;
+          return errorResponse('Background not found');
+        }
+
+        const songsPath = LocalBeatmapScanner.getSongsPath();
+        const bgPath = path.join(songsPath, localMap.folderName, localMap.backgroundFilename);
+
+        try {
+          const fileBuffer = await fs.readFile(bgPath);
+          let mimeType = 'image/jpeg';
+          if (localMap.backgroundFilename.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+          else if (localMap.backgroundFilename.toLowerCase().endsWith('.webp')) mimeType = 'image/webp';
+          else if (localMap.backgroundFilename.toLowerCase().endsWith('.gif')) mimeType = 'image/gif';
+
+          set.headers['Content-Type'] = mimeType;
+          return fileBuffer;
+        } catch {
+          set.status = 404;
+          return errorResponse('Background file not found');
+        }
+      },
+      {
+        query: t.Object({
+          id: t.String({ format: 'uuid' }),
+        }),
+      }
+    )
+
+    // ── GET /beatmaps/local/osz — Stream dynamic OSZ zip file ──────────────
+    .get(
+      '/local/osz',
+      async ({ query, set }) => {
+        const id = query.id;
+        const localMap = await LocalBeatmapScanner.getById(id);
+        if (!localMap) {
+          set.status = 404;
+          return errorResponse('Local beatmap not found');
+        }
+
+        const songsPath = LocalBeatmapScanner.getSongsPath();
+        const dirPath = path.join(songsPath, localMap.folderName);
+
+        try {
+          const zip = new JSZip();
+          const files = await fs.readdir(dirPath);
+
+          // 1. Pack all .osu files in the directory
+          for (const file of files) {
+            if (file.endsWith('.osu')) {
+              const content = await fs.readFile(path.join(dirPath, file));
+              zip.file(file, content);
+            }
+          }
+
+          // 2. Pack the current audio file
+          if (localMap.audioFilename) {
+            const audioPath = path.join(dirPath, localMap.audioFilename);
+            try {
+              const content = await fs.readFile(audioPath);
+              zip.file(localMap.audioFilename, content);
+            } catch (err) {
+              console.warn(`Could not add audio file to local zip: ${audioPath}`, err);
+            }
+          }
+
+          // 3. Pack the background file if present
+          if (localMap.backgroundFilename) {
+            const bgPath = path.join(dirPath, localMap.backgroundFilename);
+            try {
+              const content = await fs.readFile(bgPath);
+              zip.file(localMap.backgroundFilename, content);
+            } catch (err) {
+              console.warn(`Could not add background file to local zip: ${bgPath}`, err);
+            }
+          }
+
+          const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+          
+          set.headers['Content-Type'] = 'application/x-osu-beatmap-archive';
+          set.headers['Content-Disposition'] = `attachment; filename="${localMap.folderName}.osz"`;
+          return buffer;
+        } catch (err: any) {
+          set.status = 500;
+          return errorResponse(`Failed to generate local OSZ archive: ${err.message}`);
+        }
+      },
+      {
+        query: t.Object({
+          id: t.String({ format: 'uuid' }),
+        }),
+      }
+    )
+
     // ── GET /beatmaps — list all (with pagination, grouped by set) ──────────
     .get(
       '',
       async ({ query }) => {
         const page  = Math.max(1, Number(query.page  ?? 1));
-        const limit = Math.min(100, Math.max(1, Number(query.limit ?? 10)));
+        const limitQuery = query.limit;
+        const limit = limitQuery === 'all' || limitQuery === '-1'
+          ? 999999
+          : Math.min(10000, Math.max(1, Number(limitQuery ?? 10)));
         const offset = (page - 1) * limit;
         const search = query.search;
+
+        // Prioritize local beatmaps if any are found
+        const localItems = await LocalBeatmapScanner.scan();
+        if (localItems.length > 0) {
+          const lowerSearch = search ? search.toLowerCase() : '';
+          const filteredLocal = localItems.filter(item => {
+            const b = item.beatmap;
+            return !search || 
+              b.title.toLowerCase().includes(lowerSearch) ||
+              b.artist.toLowerCase().includes(lowerSearch) ||
+              b.creator.toLowerCase().includes(lowerSearch) ||
+              b.difficultyName.toLowerCase().includes(lowerSearch);
+          }).map(item => item.beatmap);
+
+          const total = filteredLocal.length;
+          const paginated = filteredLocal.slice(offset, offset + limit);
+
+          return successResponse({
+            data: paginated,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+          });
+        }
 
         let whereClause = undefined;
         if (search) {
@@ -30,47 +162,58 @@ export const beatmapModule = new Elysia()
           );
         }
 
-        const countResult = await db
-          .select({ count: sql<number>`count(distinct ${beatmaps.filePath})::int` })
-          .from(beatmaps)
-          .where(whereClause);
-        
-        const total = countResult[0]?.count ?? 0;
+        try {
+          const countResult = await db
+            .select({ count: sql<number>`count(distinct ${beatmaps.filePath})::int` })
+            .from(beatmaps)
+            .where(whereClause);
+          
+          const total = countResult[0]?.count ?? 0;
 
-        const uniquePaths = await db
-          .select({ filePath: beatmaps.filePath })
-          .from(beatmaps)
-          .where(whereClause)
-          .groupBy(beatmaps.filePath)
-          .orderBy(desc(sql`max(${beatmaps.createdAt})`))
-          .limit(limit)
-          .offset(offset);
+          const uniquePaths = await db
+            .select({ filePath: beatmaps.filePath })
+            .from(beatmaps)
+            .where(whereClause)
+            .groupBy(beatmaps.filePath)
+            .orderBy(desc(sql`max(${beatmaps.createdAt})`))
+            .limit(limit)
+            .offset(offset);
 
-        const pathList = uniquePaths.map(p => p.filePath);
+          const pathList = uniquePaths.map(p => p.filePath);
 
-        if (pathList.length === 0) {
+          if (pathList.length === 0) {
+            return successResponse({
+              data: [],
+              total,
+              page,
+              limit,
+              totalPages: Math.ceil(total / limit),
+            });
+          }
+
+          const items = await db
+            .select()
+            .from(beatmaps)
+            .where(inArray(beatmaps.filePath, pathList))
+            .orderBy(desc(beatmaps.createdAt));
+
           return successResponse({
-            data: [],
+            data: items,
             total,
             page,
             limit,
             totalPages: Math.ceil(total / limit),
           });
+        } catch (err) {
+          console.warn('Supabase DB connection failed, returning empty list:', err);
+          return successResponse({
+            data: [],
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          });
         }
-
-        const items = await db
-          .select()
-          .from(beatmaps)
-          .where(inArray(beatmaps.filePath, pathList))
-          .orderBy(desc(beatmaps.createdAt));
-
-        return successResponse({
-          data: items,
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        });
       },
       {
         query: t.Object({
@@ -78,15 +221,43 @@ export const beatmapModule = new Elysia()
           limit:  t.Optional(t.String()),
           search: t.Optional(t.String()),
         }),
-      },
+      }
     )
     .get(
       '/',
       async ({ query }) => {
         const page  = Math.max(1, Number(query.page  ?? 1));
-        const limit = Math.min(100, Math.max(1, Number(query.limit ?? 10)));
+        const limitQuery = query.limit;
+        const limit = limitQuery === 'all' || limitQuery === '-1'
+          ? 999999
+          : Math.min(10000, Math.max(1, Number(limitQuery ?? 10)));
         const offset = (page - 1) * limit;
         const search = query.search;
+
+        // Prioritize local beatmaps if any are found
+        const localItems = await LocalBeatmapScanner.scan();
+        if (localItems.length > 0) {
+          const lowerSearch = search ? search.toLowerCase() : '';
+          const filteredLocal = localItems.filter(item => {
+            const b = item.beatmap;
+            return !search || 
+              b.title.toLowerCase().includes(lowerSearch) ||
+              b.artist.toLowerCase().includes(lowerSearch) ||
+              b.creator.toLowerCase().includes(lowerSearch) ||
+              b.difficultyName.toLowerCase().includes(lowerSearch);
+          }).map(item => item.beatmap);
+
+          const total = filteredLocal.length;
+          const paginated = filteredLocal.slice(offset, offset + limit);
+
+          return successResponse({
+            data: paginated,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+          });
+        }
 
         let whereClause = undefined;
         if (search) {
@@ -99,47 +270,58 @@ export const beatmapModule = new Elysia()
           );
         }
 
-        const countResult = await db
-          .select({ count: sql<number>`count(distinct ${beatmaps.filePath})::int` })
-          .from(beatmaps)
-          .where(whereClause);
-        
-        const total = countResult[0]?.count ?? 0;
+        try {
+          const countResult = await db
+            .select({ count: sql<number>`count(distinct ${beatmaps.filePath})::int` })
+            .from(beatmaps)
+            .where(whereClause);
+          
+          const total = countResult[0]?.count ?? 0;
 
-        const uniquePaths = await db
-          .select({ filePath: beatmaps.filePath })
-          .from(beatmaps)
-          .where(whereClause)
-          .groupBy(beatmaps.filePath)
-          .orderBy(desc(sql`max(${beatmaps.createdAt})`))
-          .limit(limit)
-          .offset(offset);
+          const uniquePaths = await db
+            .select({ filePath: beatmaps.filePath })
+            .from(beatmaps)
+            .where(whereClause)
+            .groupBy(beatmaps.filePath)
+            .orderBy(desc(sql`max(${beatmaps.createdAt})`))
+            .limit(limit)
+            .offset(offset);
 
-        const pathList = uniquePaths.map(p => p.filePath);
+          const pathList = uniquePaths.map(p => p.filePath);
 
-        if (pathList.length === 0) {
+          if (pathList.length === 0) {
+            return successResponse({
+              data: [],
+              total,
+              page,
+              limit,
+              totalPages: Math.ceil(total / limit),
+            });
+          }
+
+          const items = await db
+            .select()
+            .from(beatmaps)
+            .where(inArray(beatmaps.filePath, pathList))
+            .orderBy(desc(beatmaps.createdAt));
+
           return successResponse({
-            data: [],
+            data: items,
             total,
             page,
             limit,
             totalPages: Math.ceil(total / limit),
           });
+        } catch (err) {
+          console.warn('Supabase DB connection failed, returning empty list:', err);
+          return successResponse({
+            data: [],
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          });
         }
-
-        const items = await db
-          .select()
-          .from(beatmaps)
-          .where(inArray(beatmaps.filePath, pathList))
-          .orderBy(desc(beatmaps.createdAt));
-
-        return successResponse({
-          data: items,
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        });
       },
       {
         query: t.Object({
@@ -147,25 +329,36 @@ export const beatmapModule = new Elysia()
           limit:  t.Optional(t.String()),
           search: t.Optional(t.String()),
         }),
-      },
+      }
     )
 
     // ── GET /beatmaps/:id — single beatmap detail ──────────────────────────
     .get(
       '/:id',
       async ({ params, set }) => {
-        const [beatmap] = await db
-          .select()
-          .from(beatmaps)
-          .where(eq(beatmaps.id, params.id))
-          .limit(1);
-
-        if (!beatmap) {
-          set.status = 404;
-          return errorResponse('Beatmap not found');
+        // Check local scanner first
+        const localMap = await LocalBeatmapScanner.getById(params.id);
+        if (localMap) {
+          return successResponse(localMap.beatmap);
         }
 
-        return successResponse(beatmap);
+        try {
+          const [beatmap] = await db
+            .select()
+            .from(beatmaps)
+            .where(eq(beatmaps.id, params.id))
+            .limit(1);
+
+          if (!beatmap) {
+            set.status = 404;
+            return errorResponse('Beatmap not found');
+          }
+
+          return successResponse(beatmap);
+        } catch (err) {
+          set.status = 404;
+          return errorResponse('Beatmap not found (Supabase DB offline)');
+        }
       },
       {
         params: t.Object({
@@ -178,23 +371,32 @@ export const beatmapModule = new Elysia()
     .get(
       '/:id/url',
       async ({ params, set }) => {
-        const [beatmap] = await db
-          .select({ filePath: beatmaps.filePath })
-          .from(beatmaps)
-          .where(eq(beatmaps.id, params.id))
-          .limit(1);
-
-        if (!beatmap) {
-          set.status = 404;
-          return errorResponse('Beatmap not found');
+        // Check local scanner first
+        const localMap = await LocalBeatmapScanner.getById(params.id);
+        if (localMap) {
+          return successResponse({ 
+            url: `http://localhost:3000/beatmaps/local/osz?id=${params.id}`, 
+            expiresIn: 3600 
+          });
         }
 
         try {
+          const [beatmap] = await db
+            .select({ filePath: beatmaps.filePath })
+            .from(beatmaps)
+            .where(eq(beatmaps.id, params.id))
+            .limit(1);
+
+          if (!beatmap) {
+            set.status = 404;
+            return errorResponse('Beatmap not found');
+          }
+
           const signedUrl = await getSignedUrl(beatmap.filePath, 3600);
           return successResponse({ url: signedUrl, expiresIn: 3600 });
-        } catch {
+        } catch (err: any) {
           set.status = 500;
-          return errorResponse('Failed to generate download URL');
+          return errorResponse(`Failed to generate download URL: ${err.message}`);
         }
       },
       {
