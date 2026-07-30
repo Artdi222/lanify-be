@@ -68,13 +68,7 @@ Port:    ${String(port).padEnd(35)}
 URL:     http://localhost:${String(port).padEnd(18)}
 `);
 
-// Pre-scan local beatmaps in the background to warm the cache
-import { LocalBeatmapScanner } from './utils/local-scanner';
-LocalBeatmapScanner.scan().then((results) => {
-  console.log(`[Startup] Pre-scanned and cached ${results.length} local beatmaps.`);
-}).catch((err) => {
-  console.warn('[Startup] Failed to pre-scan local beatmaps:', err);
-});
+
 
 export type App = typeof app;
 export default app;
