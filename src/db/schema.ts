@@ -27,6 +27,7 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   role:         userRoleEnum('role').notNull().default('user'),
   avatarUrl:    text('avatar_url'),
+  bannerUrl:    text('banner_url'),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
 });
 

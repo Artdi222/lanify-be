@@ -14,6 +14,7 @@ export const userModule = new Elysia({ prefix: '/users' })
           id: users.id,
           username: users.username,
           avatarUrl: users.avatarUrl,
+          bannerUrl: users.bannerUrl,
           createdAt: users.createdAt,
         })
         .from(users)
@@ -52,6 +53,7 @@ export const userModule = new Elysia({ prefix: '/users' })
       const updateData: Record<string, string> = {};
       if (body.username !== undefined) updateData.username = body.username;
       if (body.avatarUrl !== undefined) updateData.avatarUrl = body.avatarUrl;
+      if (body.bannerUrl !== undefined) updateData.bannerUrl = body.bannerUrl;
 
       const [updated] = await db
         .update(users)
@@ -63,6 +65,7 @@ export const userModule = new Elysia({ prefix: '/users' })
           email: users.email,
           role: users.role,
           avatarUrl: users.avatarUrl,
+          bannerUrl: users.bannerUrl,
           createdAt: users.createdAt,
         });
 
@@ -77,6 +80,7 @@ export const userModule = new Elysia({ prefix: '/users' })
       body: t.Object({
         username: t.Optional(t.String({ minLength: 3, maxLength: 50 })),
         avatarUrl: t.Optional(t.String()),
+        bannerUrl: t.Optional(t.String()),
       }),
     },
   );
