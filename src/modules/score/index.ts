@@ -4,6 +4,8 @@ import { db } from '../../db';
 import { scores, beatmaps, users } from '../../db/schema';
 import { successResponse, errorResponse, calculateRank } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
+import { validateMods } from '../../utils/mod-validator';
+import { calculateAccuracyFromJudgements, buildScoreInfo, calculatePp } from '../../utils/pp-calculator';
 
 export const scoreModule = new Elysia({ prefix: '/scores' })
 
@@ -66,9 +68,13 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
   .post(
     '',
     async ({ body, user, set }) => {
-      // Verify beatmap exists
+      // 1. Verify beatmap exists and get note counts
       const [beatmap] = await db
-        .select({ id: beatmaps.id })
+        .select({ 
+          id: beatmaps.id,
+          noteCount: beatmaps.noteCount,
+          holdCount: beatmaps.holdCount,
+        })
         .from(beatmaps)
         .where(eq(beatmaps.id, body.beatmapId))
         .limit(1);
@@ -78,35 +84,103 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
         return errorResponse('Beatmap not found');
       }
 
-      // Auto-calculate rank from accuracy
-      const rank = calculateRank(body.accuracy);
+      // 2. Validate mods
+      const modCheck = validateMods(body.mods || '');
+      if (!modCheck.valid) {
+        set.status = 400;
+        return errorResponse(modCheck.error || 'Invalid mods');
+      }
 
-      const [newScore] = await db
-        .insert(scores)
-        .values({
-          userId:    user.id,
-          beatmapId: body.beatmapId,
-          score:     body.score,
-          accuracy:  body.accuracy,
-          maxCombo:  body.maxCombo,
-          marvelous: body.marvelous ?? 0,
-          perfect:   body.perfect   ?? 0,
-          great:     body.great     ?? 0,
-          good:      body.good      ?? 0,
-          bad:       body.bad       ?? 0,
-          miss:      body.miss      ?? 0,
-          accuracyHistory: body.accuracyHistory ?? null,
-          hitErrors:       body.hitErrors       ?? null,
-          mods:      body.mods      ?? null,
-          rank,
-        })
-        .returning();
+      const marvelous = body.marvelous ?? 0;
+      const perfect   = body.perfect ?? 0;
+      const great     = body.great ?? 0;
+      const good      = body.good ?? 0;
+      const bad       = body.bad ?? 0;
+      const miss      = body.miss ?? 0;
       
-      // Increment play count on beatmap
-      await db
-        .update(beatmaps)
-        .set({ playCount: sql`${beatmaps.playCount} + 1` })
-        .where(eq(beatmaps.id, body.beatmapId));
+      const totalJudgements = marvelous + perfect + great + good + bad + miss;
+
+      // 3. Basic validation against beatmap object count
+      // A hold note can have multiple ticks, so total judgements can exceed noteCount + holdCount.
+      // But we can apply a generous upper bound to prevent integer overflow abuse.
+      const maxPossibleObjects = beatmap.noteCount + beatmap.holdCount * 50; 
+      if (totalJudgements > maxPossibleObjects || totalJudgements === 0) {
+        set.status = 400;
+        return errorResponse('Invalid judgement counts');
+      }
+
+      // 4. Server-side accuracy recompute
+      const accuracy = calculateAccuracyFromJudgements(
+        marvelous, perfect, great, good, bad, miss
+      );
+      const rank = calculateRank(accuracy);
+
+      // 5. Calculate PP
+      const scoreInfo = buildScoreInfo(
+        marvelous, perfect, great, good, bad, miss, body.maxCombo, body.score
+      );
+      
+      const pp = await calculatePp(beatmap.id, body.mods || '', scoreInfo);
+
+      let newScore;
+      await db.transaction(async (tx) => {
+        // Insert score
+        const [inserted] = await tx
+          .insert(scores)
+          .values({
+            userId:    user.id,
+            beatmapId: body.beatmapId,
+            score:     body.score,
+            accuracy:  accuracy, // Store server-computed accuracy
+            maxCombo:  body.maxCombo,
+            marvelous,
+            perfect,
+            great,
+            good,
+            bad,
+            miss,
+            accuracyHistory: body.accuracyHistory ?? null,
+            hitErrors:       body.hitErrors       ?? null,
+            mods:      body.mods      ?? null,
+            pp, // Store calculated PP
+            rank,
+          })
+          .returning();
+        
+        newScore = inserted;
+        
+        // Increment play count on beatmap
+        await tx
+          .update(beatmaps)
+          .set({ playCount: sql`${beatmaps.playCount} + 1` })
+          .where(eq(beatmaps.id, body.beatmapId));
+          
+        // Recompute user's total PP (weighted top-N)
+        // Note: we only count scores set on 'ranked' maps for PP.
+        const userTopScores = await tx.execute(sql`
+          SELECT s.pp
+          FROM (
+            SELECT DISTINCT ON (beatmap_id) pp
+            FROM scores
+            INNER JOIN beatmaps b ON scores.beatmap_id = b.id
+            WHERE user_id = ${user.id} AND b.ranked_status = 'ranked'
+            ORDER BY beatmap_id, pp DESC
+          ) s
+          ORDER BY s.pp DESC
+          LIMIT 100
+        `);
+
+        let totalPp = 0;
+        const rows = (userTopScores as any).rows ?? userTopScores;
+        rows.forEach((row: any, i: number) => {
+          totalPp += row.pp * Math.pow(0.95, i);
+        });
+
+        await tx
+          .update(users)
+          .set({ totalPp })
+          .where(eq(users.id, user.id));
+      });
 
       return successResponse(newScore);
     },

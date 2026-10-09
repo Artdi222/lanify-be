@@ -9,17 +9,14 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
   .get('/global', async () => {
     const results = await db
       .select({
-        userId:     scores.userId,
+        userId:     users.id,
         username:   users.username,
         avatarUrl:  users.avatarUrl,
-        totalScore: sql<number>`sum(${scores.score})::bigint`.as('total_score'),
-        playCount:  sql<number>`count(${scores.id})::int`.as('play_count'),
-        avgAccuracy: sql<number>`round(avg(${scores.accuracy})::numeric, 2)`.as('avg_accuracy'),
+        totalPp:    users.totalPp,
       })
-      .from(scores)
-      .innerJoin(users, sql`${scores.userId} = ${users.id}`)
-      .groupBy(scores.userId, users.username, users.avatarUrl)
-      .orderBy(desc(sql`total_score`))
+      .from(users)
+      .where(sql`${users.totalPp} > 0`)
+      .orderBy(desc(users.totalPp))
       .limit(100);
 
     const ranked = results.map((row, i) => ({ position: i + 1, ...row }));
@@ -29,21 +26,23 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
     '/:beatmapId',
     async ({ params }) => {
       const results = await db.execute(sql`
-        SELECT DISTINCT ON (s.user_id)
-          s.id, s.user_id, u.username, u.avatar_url,
-          s.score, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
-          s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss,
-          s.accuracy_history, s.hit_errors
-        FROM scores s
-        INNER JOIN users u ON s.user_id = u.id
-        WHERE s.beatmap_id = ${params.beatmapId}
-        ORDER BY s.user_id, s.score DESC
+        SELECT * FROM (
+          SELECT DISTINCT ON (s.user_id)
+            s.id, s.user_id, u.username, u.avatar_url,
+            s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
+            s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss,
+            s.accuracy_history, s.hit_errors
+          FROM scores s
+          INNER JOIN users u ON s.user_id = u.id
+          WHERE s.beatmap_id = ${params.beatmapId}
+          ORDER BY s.user_id, s.pp DESC
+        ) sub
+        ORDER BY pp DESC
+        LIMIT 50
       `);
 
       const rows = (results as any).rows ?? results;
       const sorted = (rows as any[])
-        .sort((a: any, b: any) => Number(b.score) - Number(a.score))
-        .slice(0, 50)
         .map((row: any, i: number) => ({
           position: i + 1,
           id: row.id,
@@ -51,6 +50,7 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
           username: row.username,
           avatarUrl: row.avatar_url,
           score: row.score,
+          pp: row.pp,
           accuracy: row.accuracy,
           maxCombo: row.max_combo,
           rank: row.rank,
@@ -77,15 +77,15 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
     '/:beatmapId/local',
     async ({ params, user }) => {
       const results = await db.execute(sql`
-        SELECT DISTINCT ON (s.score)
+        SELECT
           s.id, s.user_id, u.username, u.avatar_url,
-          s.score, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
+          s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
           s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss,
           s.accuracy_history, s.hit_errors
         FROM scores s
         INNER JOIN users u ON s.user_id = u.id
         WHERE s.beatmap_id = ${params.beatmapId} AND s.user_id = ${user.id}
-        ORDER BY s.score DESC, s.submitted_at DESC
+        ORDER BY s.pp DESC, s.submitted_at DESC
         LIMIT 50
       `);
 
@@ -98,6 +98,7 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
           username: row.username,
           avatarUrl: row.avatar_url,
           score: row.score,
+          pp: row.pp,
           accuracy: row.accuracy,
           maxCombo: row.max_combo,
           rank: row.rank,

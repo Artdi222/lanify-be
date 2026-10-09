@@ -16,6 +16,7 @@ export const userModule = new Elysia({ prefix: '/users' })
           avatarUrl: users.avatarUrl,
           bannerUrl: users.bannerUrl,
           createdAt: users.createdAt,
+          totalPp: users.totalPp,
         })
         .from(users)
         .where(eq(users.id, params.id))
@@ -28,17 +29,25 @@ export const userModule = new Elysia({ prefix: '/users' })
 
       const [stats] = await db
         .select({
-          totalScore:  sql<number>`coalesce(sum(${scores.score}), 0)::bigint`,
           playCount:   sql<number>`count(${scores.id})::int`,
           avgAccuracy: sql<number>`round(coalesce(avg(${scores.accuracy}), 0)::numeric, 2)`,
         })
         .from(scores)
         .where(eq(scores.userId, params.id));
 
+      const rankRes = await db.execute(sql`
+        SELECT COUNT(*) + 1 as rank
+        FROM users
+        WHERE total_pp > ${user.totalPp}
+      `);
+
+      const rankRows = (rankRes as any).rows ?? rankRes;
+      const globalRank = rankRows[0]?.rank ?? 0;
+
       return successResponse({
         ...user,
+        globalRank: Number(globalRank),
         stats: {
-          totalScore:  Number(stats?.totalScore ?? 0),
           playCount:   Number(stats?.playCount ?? 0),
           avgAccuracy: Number(stats?.avgAccuracy ?? 0),
         },
