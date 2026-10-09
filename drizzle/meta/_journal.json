@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785732530198,
+      "tag": "0000_organic_betty_ross",
+      "breakpoints": true
+    }
+  ]
+}

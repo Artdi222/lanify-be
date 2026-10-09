@@ -2,7 +2,7 @@ import { Elysia, t } from 'elysia';
 import { eq, sql, desc, and, ne, or, ilike, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
 import { db } from '../../db';
-import { beatmaps } from '../../db/schema';
+import { beatmaps, chartDifficulty } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { getSignedUrl, deleteFile, uploadFile, getFileStream } from '../../storage/b2';
@@ -304,6 +304,31 @@ export const beatmapModule = new Elysia()
           return results;
         });
 
+        try {
+          const file = await getFileStream(filePath);
+          const buffer = Buffer.from(await (file.Body as any).transformToByteArray());
+          const allDiffs = await BeatmapParser.calculateAllDifficultiesFromOsz(buffer);
+
+          const cacheInserts = [];
+          for (const nb of newBeatmaps) {
+            const matches = allDiffs.filter(d => d.difficultyName === nb.difficultyName);
+            for (const m of matches) {
+              cacheInserts.push({
+                beatmapId: nb.id,
+                mods: m.mods,
+                starRating: m.starRating,
+                greatHitWindow: m.greatHitWindow,
+                maxCombo: m.maxCombo,
+              });
+            }
+          }
+          if (cacheInserts.length > 0) {
+            await db.insert(chartDifficulty).values(cacheInserts);
+          }
+        } catch (err) {
+          console.error('Failed to populate difficulty cache:', err);
+        }
+
         return successResponse(newBeatmaps);
       },
       {
@@ -364,6 +389,27 @@ export const beatmapModule = new Elysia()
             uploadedBy:     user.id,
           })
           .returning();
+
+        try {
+          const file = await getFileStream(body.filePath);
+          const buffer = Buffer.from(await (file.Body as any).transformToByteArray());
+          const allDiffs = await BeatmapParser.calculateAllDifficultiesFromOsz(buffer);
+
+          const matches = allDiffs.filter(d => d.difficultyName === newBeatmap.difficultyName);
+          const cacheInserts = matches.map(m => ({
+            beatmapId: newBeatmap.id,
+            mods: m.mods,
+            starRating: m.starRating,
+            greatHitWindow: m.greatHitWindow,
+            maxCombo: m.maxCombo,
+          }));
+          
+          if (cacheInserts.length > 0) {
+            await db.insert(chartDifficulty).values(cacheInserts);
+          }
+        } catch (err) {
+          console.error('Failed to populate difficulty cache:', err);
+        }
 
         return successResponse(newBeatmap);
       },

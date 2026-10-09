@@ -7,6 +7,7 @@ import {
   integer,
   real,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -28,6 +29,7 @@ export const users = pgTable('users', {
   role:         userRoleEnum('role').notNull().default('user'),
   avatarUrl:    text('avatar_url'),
   bannerUrl:    text('banner_url'),
+  totalPp:      real('total_pp').notNull().default(0),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -77,9 +79,24 @@ export const scores = pgTable('scores', {
   accuracyHistory: text('accuracy_history'), // JSON string of AccuracyPoint[]
   hitErrors:       text('hit_errors'),       // JSON string of HitError[]
   mods:        text('mods'),                // JSON array string e.g. '["HD","DT"]'
+  pp:          real('pp').notNull().default(0),
   rank:        rankEnum('rank').notNull(),
   submittedAt: timestamp('submitted_at').notNull().defaultNow(),
 });
+
+// ─── Chart Difficulty Cache ───────────────────────────────────────────────────
+
+export const chartDifficulty = pgTable('chart_difficulty', {
+  id:             uuid('id').primaryKey().defaultRandom(),
+  beatmapId:      uuid('beatmap_id').notNull().references(() => beatmaps.id, { onDelete: 'cascade' }),
+  mods:           varchar('mods', { length: 50 }).notNull().default(''),  // e.g. 'DTHD' or '' for NM
+  starRating:     real('star_rating').notNull(),
+  greatHitWindow: real('great_hit_window').notNull(),
+  maxCombo:       integer('max_combo').notNull(),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+  uniqBeatmapMods: uniqueIndex('chart_difficulty_beatmap_mods_idx').on(table.beatmapId, table.mods),
+}));
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 
@@ -94,6 +111,14 @@ export const beatmapsRelations = relations(beatmaps, ({ one, many }) => ({
     references: [users.id],
   }),
   scores: many(scores),
+  difficultyCache: many(chartDifficulty),
+}));
+
+export const chartDifficultyRelations = relations(chartDifficulty, ({ one }) => ({
+  beatmap: one(beatmaps, {
+    fields:     [chartDifficulty.beatmapId],
+    references: [beatmaps.id],
+  }),
 }));
 
 export const scoresRelations = relations(scores, ({ one }) => ({
@@ -117,3 +142,6 @@ export type NewBeatmap = typeof beatmaps.$inferInsert;
 
 export type Score    = typeof scores.$inferSelect;
 export type NewScore = typeof scores.$inferInsert;
+
+export type ChartDifficulty    = typeof chartDifficulty.$inferSelect;
+export type NewChartDifficulty = typeof chartDifficulty.$inferInsert;
