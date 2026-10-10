@@ -63,6 +63,33 @@ export const userModule = new Elysia({ prefix: '/users' })
     );
   })
   .get(
+    '/:id/scores',
+    async ({ params }) => {
+      // Best pp score per ranked beatmap, same set and order that builds users.total_pp (weight 0.95^i).
+      // "first" = that score is also the top pp on the beatmap (leaderboards sort by pp).
+      const rows = rowsOf(await db.execute(sql`
+        WITH best AS (
+          SELECT DISTINCT ON (s.beatmap_id) s.id, s.beatmap_id, s.score, s.accuracy, s.max_combo, s.pp, s.rank, s.mods, s.submitted_at
+          FROM scores s
+          INNER JOIN beatmaps b ON b.id = s.beatmap_id
+          WHERE s.user_id = ${params.id} AND b.ranked_status = 'ranked'
+          ORDER BY s.beatmap_id, s.pp DESC
+        )
+        SELECT best.id, best.score, best.accuracy, best.max_combo AS "maxCombo", best.pp, best.rank, best.mods,
+               to_json(best.submitted_at)#>>'{}' AS "submittedAt",
+               b.id AS "beatmapId", b.title, b.artist, b.difficulty_name AS "difficultyName", b.key_count AS "keyCount",
+               b.cover_url AS "coverUrl",
+               NOT EXISTS (SELECT 1 FROM scores o WHERE o.beatmap_id = best.beatmap_id AND o.pp > best.pp) AS first
+        FROM best
+        INNER JOIN beatmaps b ON b.id = best.beatmap_id
+        ORDER BY best.pp DESC
+        LIMIT 100
+      `));
+      return successResponse(rows.map((r, i) => ({ ...r, weight: Math.pow(0.95, i) })));
+    },
+    { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
+  )
+  .get(
     '/:id',
     async ({ params, set }) => {
       // One round trip: the DB is remote (~400 ms per query), so four sequential queries took ~1.7 s.
