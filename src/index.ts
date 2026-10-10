@@ -43,7 +43,7 @@ const app = new Elysia()
   .get('/', () => ({
     success: true,
     data: {
-      name: 'Lanify API',
+      name: 'Lany API',
       version: '1.0.0',
       description: 'osu!mania web rhythm game backend',
     },
