@@ -103,15 +103,19 @@ export async function calculatePp(
 }
 
 /**
- * PP of a perfect (all MAX, full combo) play on a beatmap with no mods, plus its NM star rating.
- * Used as the "Maximum" in the result screen's performance breakdown. Null when the cache is missing.
+ * PP of a perfect play (every judgement MAX, full combo) with the given mods, plus that mod
+ * combination's star rating. `judgementCount` is the play's real judgement total (it differs from
+ * maxCombo because hold notes give several judgements); defaults to maxCombo when unknown.
+ * Null when the difficulty cache has no row for these mods.
  */
 export async function calculateMaxPp(
-  beatmapId: string
+  beatmapId: string,
+  modsString = '',
+  judgementCount?: number
 ): Promise<{ starRating: number; maxCombo: number; maxPp: number } | null> {
   const ruleset = new ManiaRuleset();
-  const mods = ruleset.createModCombination('');
-  // Same key calculatePp uses for no mods (stored as 'NM').
+  const mods = ruleset.createModCombination(modsString);
+  // Same cache key calculatePp uses (no mods is stored as 'NM').
   const [cachedAttrs] = await db
     .select()
     .from(chartDifficulty)
@@ -123,8 +127,8 @@ export async function calculateMaxPp(
   attributes.greatHitWindow = cachedAttrs.greatHitWindow;
   attributes.maxCombo = cachedAttrs.maxCombo;
 
-  // ponytail: every judgement counted as MAX; maxCombo stands in for the judgement count.
-  const perfect = buildScoreInfo(cachedAttrs.maxCombo, 0, 0, 0, 0, 0, cachedAttrs.maxCombo, 1_000_000);
+  const count = judgementCount && judgementCount > 0 ? judgementCount : cachedAttrs.maxCombo;
+  const perfect = buildScoreInfo(count, 0, 0, 0, 0, 0, cachedAttrs.maxCombo, 1_000_000);
   const maxPp = ruleset.createPerformanceCalculator(attributes, perfect).calculate();
   return { starRating: cachedAttrs.starRating, maxCombo: cachedAttrs.maxCombo, maxPp };
 }

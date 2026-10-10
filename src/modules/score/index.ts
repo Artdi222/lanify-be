@@ -27,18 +27,24 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
     { params: t.Object({ scoreId: t.String({ format: 'uuid' }) }) },
   )
 
-  // ── GET /scores/performance/:beatmapId — NM star rating + max pp (result screen) ──
+  // ── GET /scores/performance/:beatmapId?mods&total — star rating + max pp (result screen) ──
   .get(
     '/performance/:beatmapId',
-    async ({ params, set }) => {
-      const perf = await calculateMaxPp(params.beatmapId);
+    async ({ params, query, set }) => {
+      const perf = await calculateMaxPp(params.beatmapId, query.mods ?? '', query.total);
       if (!perf) {
         set.status = 404;
         return errorResponse('No difficulty data for this beatmap');
       }
       return successResponse(perf);
     },
-    { params: t.Object({ beatmapId: t.String({ format: 'uuid' }) }) },
+    {
+      params: t.Object({ beatmapId: t.String({ format: 'uuid' }) }),
+      query: t.Object({
+        mods: t.Optional(t.String({ maxLength: 50 })),
+        total: t.Optional(t.Numeric({ minimum: 1 })),
+      }),
+    },
   )
 
   // ── GET /scores/:beatmapId — scores for a beatmap ─────────────────────
