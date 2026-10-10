@@ -5,7 +5,63 @@ import { users, scores } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 
+const PAGE_SIZE = 50;
+const rowsOf = (res: unknown) => ((res as any).rows ?? res) as any[];
+
 export const userModule = new Elysia({ prefix: '/users' })
+  // Static routes first so they never fall into '/:id'.
+  .get(
+    '/rankings',
+    async ({ query }) => {
+      const page = Math.max(1, query.page ?? 1);
+      const country = query.country?.toUpperCase();
+      // ponytail: accuracy/play count over all submitted scores, same as the profile endpoint.
+      const res = await db.execute(sql`
+        SELECT u.id, u.username, u.avatar_url AS "avatarUrl", u.country, u.total_pp AS "totalPp",
+               COALESCE(ROUND(AVG(s.accuracy)::numeric, 2), 0)::float AS accuracy,
+               COUNT(s.id)::int AS "playCount",
+               COUNT(*) FILTER (WHERE s.rank = 'SS')::int AS ss,
+               COUNT(*) FILTER (WHERE s.rank = 'S')::int AS s,
+               COUNT(*) FILTER (WHERE s.rank = 'A')::int AS a,
+               (SELECT COUNT(*) FROM users ${country ? sql`WHERE country = ${country}` : sql``})::int AS total
+        FROM users u
+        LEFT JOIN scores s ON s.user_id = u.id
+        ${country ? sql`WHERE u.country = ${country}` : sql``}
+        GROUP BY u.id
+        ORDER BY u.total_pp DESC, u.created_at ASC
+        LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}
+      `);
+      const rows = rowsOf(res);
+      const total = Number(rows[0]?.total ?? 0);
+      return successResponse({
+        page,
+        pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+        entries: rows.map(({ total: _t, ...r }, i) => ({ ...r, rank: (page - 1) * PAGE_SIZE + i + 1 })),
+      });
+    },
+    {
+      query: t.Object({
+        page: t.Optional(t.Numeric({ minimum: 1 })),
+        country: t.Optional(t.String({ pattern: '^[A-Za-z]{2}$' })),
+      }),
+    },
+  )
+  .get('/rankings/countries', async () => {
+    const res = await db.execute(sql`
+      SELECT u.country,
+             COUNT(DISTINCT u.id)::int AS "activeUsers",
+             COUNT(s.id)::int AS "playCount",
+             (SELECT SUM(total_pp) FROM users WHERE country = u.country)::float AS performance
+      FROM users u
+      LEFT JOIN scores s ON s.user_id = u.id
+      WHERE u.country IS NOT NULL
+      GROUP BY u.country
+      ORDER BY performance DESC
+    `);
+    return successResponse(
+      rowsOf(res).map((r, i) => ({ ...r, rank: i + 1, avgPerformance: r.activeUsers ? r.performance / r.activeUsers : 0 })),
+    );
+  })
   .get(
     '/:id',
     async ({ params, set }) => {
