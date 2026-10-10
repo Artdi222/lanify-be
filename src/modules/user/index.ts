@@ -76,7 +76,7 @@ export const userModule = new Elysia({ prefix: '/users' })
           ORDER BY s.beatmap_id, s.pp DESC
         )
         SELECT best.id, best.score, best.accuracy, best.max_combo AS "maxCombo", best.pp, best.rank, best.mods,
-               to_json(best.submitted_at)#>>'{}' AS "submittedAt",
+               to_json(best.submitted_at AT TIME ZONE 'UTC')#>>'{}' AS "submittedAt",
                b.id AS "beatmapId", b.title, b.artist, b.difficulty_name AS "difficultyName", b.key_count AS "keyCount",
                b.cover_url AS "coverUrl",
                NOT EXISTS (SELECT 1 FROM scores o WHERE o.beatmap_id = best.beatmap_id AND o.pp > best.pp) AS first
@@ -95,7 +95,7 @@ export const userModule = new Elysia({ prefix: '/users' })
       // One round trip: the DB is remote (~400 ms per query), so four sequential queries took ~1.7 s.
       const [row] = rowsOf(await db.execute(sql`
         SELECT u.id, u.username, u.avatar_url AS "avatarUrl", u.banner_url AS "bannerUrl", u.country,
-               to_json(u.created_at)#>>'{}' AS "createdAt", u.total_pp AS "totalPp",
+               to_json(u.created_at AT TIME ZONE 'UTC')#>>'{}' AS "createdAt", u.total_pp AS "totalPp",
                (SELECT COUNT(*) FROM scores s WHERE s.user_id = u.id)::int AS "playCount",
                (SELECT ROUND(COALESCE(AVG(s.accuracy), 0)::numeric, 2) FROM scores s WHERE s.user_id = u.id)::float AS "avgAccuracy",
                (SELECT COUNT(*) + 1 FROM users o WHERE o.total_pp > u.total_pp)::int AS "globalRank",
