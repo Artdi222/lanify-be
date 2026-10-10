@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { users, scores } from '../../db/schema';
+import { users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 
@@ -65,62 +65,27 @@ export const userModule = new Elysia({ prefix: '/users' })
   .get(
     '/:id',
     async ({ params, set }) => {
-      const [user] = await db
-        .select({
-          id: users.id,
-          username: users.username,
-          avatarUrl: users.avatarUrl,
-          bannerUrl: users.bannerUrl,
-          country: users.country,
-          createdAt: users.createdAt,
-          totalPp: users.totalPp,
-        })
-        .from(users)
-        .where(eq(users.id, params.id))
-        .limit(1);
+      // One round trip: the DB is remote (~400 ms per query), so four sequential queries took ~1.7 s.
+      const [row] = rowsOf(await db.execute(sql`
+        SELECT u.id, u.username, u.avatar_url AS "avatarUrl", u.banner_url AS "bannerUrl", u.country,
+               to_json(u.created_at)#>>'{}' AS "createdAt", u.total_pp AS "totalPp",
+               (SELECT COUNT(*) FROM scores s WHERE s.user_id = u.id)::int AS "playCount",
+               (SELECT ROUND(COALESCE(AVG(s.accuracy), 0)::numeric, 2) FROM scores s WHERE s.user_id = u.id)::float AS "avgAccuracy",
+               (SELECT COUNT(*) + 1 FROM users o WHERE o.total_pp > u.total_pp)::int AS "globalRank",
+               CASE WHEN u.country IS NULL THEN NULL
+                    ELSE (SELECT COUNT(*) + 1 FROM users o WHERE o.country = u.country AND o.total_pp > u.total_pp)::int
+               END AS "countryRank"
+        FROM users u
+        WHERE u.id = ${params.id}
+      `));
 
-      if (!user) {
+      if (!row) {
         set.status = 404;
         return errorResponse('User not found');
       }
 
-      const [stats] = await db
-        .select({
-          playCount:   sql<number>`count(${scores.id})::int`,
-          avgAccuracy: sql<number>`round(coalesce(avg(${scores.accuracy}), 0)::numeric, 2)`,
-        })
-        .from(scores)
-        .where(eq(scores.userId, params.id));
-
-      const rankRes = await db.execute(sql`
-        SELECT COUNT(*) + 1 as rank
-        FROM users
-        WHERE total_pp > ${user.totalPp}
-      `);
-
-      const rankRows = (rankRes as any).rows ?? rankRes;
-      const globalRank = rankRows[0]?.rank ?? 0;
-
-      let countryRank: number | null = null;
-      if (user.country) {
-        const cr = await db.execute(sql`
-          SELECT COUNT(*) + 1 as rank
-          FROM users
-          WHERE country = ${user.country} AND total_pp > ${user.totalPp}
-        `);
-        const crRows = (cr as any).rows ?? cr;
-        countryRank = Number(crRows[0]?.rank ?? 0);
-      }
-
-      return successResponse({
-        ...user,
-        globalRank: Number(globalRank),
-        countryRank,
-        stats: {
-          playCount:   Number(stats?.playCount ?? 0),
-          avgAccuracy: Number(stats?.avgAccuracy ?? 0),
-        },
-      });
+      const { playCount, avgAccuracy, ...user } = row;
+      return successResponse({ ...user, stats: { playCount, avgAccuracy } });
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
   )
