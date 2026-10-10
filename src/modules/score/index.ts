@@ -5,9 +5,23 @@ import { scores, beatmaps, users } from '../../db/schema';
 import { successResponse, errorResponse, calculateRank } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { validateMods } from '../../utils/mod-validator';
-import { calculateAccuracyFromJudgements, buildScoreInfo, calculatePp } from '../../utils/pp-calculator';
+import { calculateAccuracyFromJudgements, buildScoreInfo, calculatePp, calculateMaxPp } from '../../utils/pp-calculator';
 
 export const scoreModule = new Elysia({ prefix: '/scores' })
+
+  // ── GET /scores/performance/:beatmapId — NM star rating + max pp (result screen) ──
+  .get(
+    '/performance/:beatmapId',
+    async ({ params, set }) => {
+      const perf = await calculateMaxPp(params.beatmapId);
+      if (!perf) {
+        set.status = 404;
+        return errorResponse('No difficulty data for this beatmap');
+      }
+      return successResponse(perf);
+    },
+    { params: t.Object({ beatmapId: t.String({ format: 'uuid' }) }) },
+  )
 
   // ── GET /scores/:beatmapId — scores for a beatmap ─────────────────────
   .get(
