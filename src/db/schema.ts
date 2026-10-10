@@ -29,6 +29,7 @@ export const users = pgTable('users', {
   role:         userRoleEnum('role').notNull().default('user'),
   avatarUrl:    text('avatar_url'),
   bannerUrl:    text('banner_url'),
+  country:      varchar('country', { length: 2 }), // ISO 3166-1 alpha-2, optional
   totalPp:      real('total_pp').notNull().default(0),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
 });
