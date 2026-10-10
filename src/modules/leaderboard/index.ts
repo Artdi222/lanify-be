@@ -29,9 +29,9 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
         SELECT * FROM (
           SELECT DISTINCT ON (s.user_id)
             s.id, s.user_id, u.username, u.avatar_url,
-            s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
-            s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss,
-            s.accuracy_history, s.hit_errors
+            s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods,
+            to_json(s.submitted_at AT TIME ZONE 'UTC')#>>'{}' AS submitted_at,
+            s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss
           FROM scores s
           INNER JOIN users u ON s.user_id = u.id
           WHERE s.beatmap_id = ${params.beatmapId}
@@ -64,8 +64,9 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
             bad: row.bad,
             miss: row.miss,
           },
-          accuracyHistory: row.accuracy_history,
-          hitErrors: row.hit_errors,
+          // Graph data (~140 KB per score) is fetched per score via GET /scores/detail/:id.
+          accuracyHistory: null,
+          hitErrors: null,
         }));
 
       return successResponse(sorted);
@@ -79,9 +80,9 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
       const results = await db.execute(sql`
         SELECT
           s.id, s.user_id, u.username, u.avatar_url,
-          s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods, s.submitted_at,
-          s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss,
-          s.accuracy_history, s.hit_errors
+          s.score, s.pp, s.accuracy, s.max_combo, s.rank, s.mods,
+          to_json(s.submitted_at AT TIME ZONE 'UTC')#>>'{}' AS submitted_at,
+          s.marvelous, s.perfect, s.great, s.good, s.bad, s.miss
         FROM scores s
         INNER JOIN users u ON s.user_id = u.id
         WHERE s.beatmap_id = ${params.beatmapId} AND s.user_id = ${user.id}
@@ -112,8 +113,9 @@ export const leaderboardModule = new Elysia({ prefix: '/leaderboard' })
             bad: row.bad,
             miss: row.miss,
           },
-          accuracyHistory: row.accuracy_history,
-          hitErrors: row.hit_errors,
+          // Graph data (~140 KB per score) is fetched per score via GET /scores/detail/:id.
+          accuracyHistory: null,
+          hitErrors: null,
         }));
 
       return successResponse(sorted);

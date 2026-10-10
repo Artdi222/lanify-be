@@ -9,6 +9,24 @@ import { calculateAccuracyFromJudgements, buildScoreInfo, calculatePp, calculate
 
 export const scoreModule = new Elysia({ prefix: '/scores' })
 
+  // ── GET /scores/detail/:scoreId — graph data left out of leaderboard lists ──
+  .get(
+    '/detail/:scoreId',
+    async ({ params, set }) => {
+      const [row] = await db
+        .select({ accuracyHistory: scores.accuracyHistory, hitErrors: scores.hitErrors })
+        .from(scores)
+        .where(eq(scores.id, params.scoreId))
+        .limit(1);
+      if (!row) {
+        set.status = 404;
+        return errorResponse('Score not found');
+      }
+      return successResponse(row);
+    },
+    { params: t.Object({ scoreId: t.String({ format: 'uuid' }) }) },
+  )
+
   // ── GET /scores/performance/:beatmapId — NM star rating + max pp (result screen) ──
   .get(
     '/performance/:beatmapId',
