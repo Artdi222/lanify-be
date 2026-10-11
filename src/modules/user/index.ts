@@ -9,7 +9,6 @@ import crypto from 'crypto';
 
 const PAGE_SIZE = 50;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const ONLINE_MS = 2 * 60 * 1000;
 
 // ponytail: activity ("Choosing a beatmap", ...) lives in memory only; it is lost on restart and not shared across
 // instances. The DB keeps last_seen_at, which is what "online" is decided from. Move to Redis if the API scales out.
@@ -17,13 +16,15 @@ const presence = new Map<string, string>();
 const ACTIVITIES = new Set(['Idle', 'Choosing a beatmap', 'Smashing keys', 'Browsing', 'Watching a replay']);
 
 /** Columns of a dashboard user card. `me` adds whether that user follows back (mutual). */
+// last_seen_at is a UTC wall time without zone; node-postgres would parse it as *local* time (7 h off in WIB),
+// so it is sent as timestamptz. `online` is decided by the database clock too.
 const cardColumns = sql`u.id, u.username, u.avatar_url AS "avatarUrl", u.banner_url AS "bannerUrl", u.country,
-  u.total_pp AS "totalPp", u.last_seen_at AS "lastSeenAt"`;
+  u.total_pp AS "totalPp", u.last_seen_at AT TIME ZONE 'UTC' AS "lastSeenAt",
+  COALESCE(u.last_seen_at > (now() AT TIME ZONE 'UTC') - interval '2 minutes', false) AS online`;
 
 function toCard(row: any) {
-  const lastSeenAt = row.lastSeenAt ? new Date(row.lastSeenAt) : null;
-  const online = !!lastSeenAt && Date.now() - lastSeenAt.getTime() < ONLINE_MS;
-  return { ...row, online, activity: online ? presence.get(row.id) ?? 'Idle' : null };
+  const lastSeenAt = row.lastSeenAt ? new Date(String(row.lastSeenAt).replace(' ', 'T').replace(/\+00$/, 'Z')).toISOString() : null;
+  return { ...row, lastSeenAt, activity: row.online ? presence.get(row.id) ?? 'Idle' : null };
 }
 
 /** Image type from magic bytes; null for anything that is not JPEG/PNG/WebP/GIF. */
@@ -110,7 +111,7 @@ export const userModule = new Elysia({ prefix: '/users' })
   .get('/online', async () => {
     const res = await db.execute(sql`
       SELECT ${cardColumns} FROM users u
-      WHERE u.last_seen_at > now() - interval '2 minutes'
+      WHERE u.last_seen_at > (now() AT TIME ZONE 'UTC') - interval '2 minutes'
       ORDER BY u.last_seen_at DESC
       LIMIT 200
     `);
@@ -176,7 +177,7 @@ export const userModule = new Elysia({ prefix: '/users' })
     '/me/heartbeat',
     async ({ body, user }) => {
       presence.set(user.id, ACTIVITIES.has(body.activity ?? '') ? body.activity! : 'Idle');
-      await db.update(users).set({ lastSeenAt: new Date() }).where(eq(users.id, user.id));
+      await db.update(users).set({ lastSeenAt: sql`now() AT TIME ZONE 'UTC'` }).where(eq(users.id, user.id));
       return successResponse({ ok: true });
     },
     { body: t.Object({ activity: t.Optional(t.String({ maxLength: 40 })) }) },
