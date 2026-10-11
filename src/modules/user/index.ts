@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { friends, users } from '../../db/schema';
+import { friends, notifications, users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { uploadFile } from '../../storage/b2';
@@ -212,7 +212,12 @@ export const userModule = new Elysia({ prefix: '/users' })
         set.status = 400;
         return errorResponse("You can't add yourself");
       }
-      await db.insert(friends).values({ userId: user.id, friendId: params.id }).onConflictDoNothing();
+      const added = await db.insert(friends).values({ userId: user.id, friendId: params.id }).onConflictDoNothing()
+        .returning({ id: friends.friendId });
+      // Only on a new follow, so un-friend/re-friend spam needs a delete in between.
+      if (added.length) {
+        await db.insert(notifications).values({ userId: params.id, text: `${user.username} added you as a friend.` });
+      }
       return successResponse({ ok: true });
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
@@ -224,6 +229,28 @@ export const userModule = new Elysia({ prefix: '/users' })
       return successResponse({ ok: true });
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
+  )
+  // ── Notifications (newest 50; the bell badge counts the unread ones) ──
+  .get('/me/notifications', async ({ user }) => {
+    const rows = await db.select({ id: notifications.id, text: notifications.text, read: notifications.read, createdAt: notifications.createdAt })
+      .from(notifications).where(eq(notifications.userId, user.id)).orderBy(sql`${notifications.id} DESC`).limit(50);
+    return successResponse(rows);
+  })
+  .post('/me/notifications/read', async ({ user }) => {
+    await db.update(notifications).set({ read: true }).where(and(eq(notifications.userId, user.id), eq(notifications.read, false)));
+    return successResponse({ ok: true });
+  })
+  .delete('/me/notifications', async ({ user }) => {
+    await db.delete(notifications).where(eq(notifications.userId, user.id));
+    return successResponse({ ok: true });
+  })
+  .delete(
+    '/me/notifications/:id',
+    async ({ params, user }) => {
+      await db.delete(notifications).where(and(eq(notifications.userId, user.id), eq(notifications.id, Number(params.id))));
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.Numeric() }) },
   )
   // ── POST /users/me/image — avatar/banner upload for any signed-in user ──
   // (/beatmaps/upload is admin-only.) The type is read from the file's magic bytes, not the client's header,

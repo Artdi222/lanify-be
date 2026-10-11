@@ -8,6 +8,9 @@ import {
   real,
   timestamp,
   uniqueIndex,
+  index,
+  serial,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -43,6 +46,19 @@ export const friends = pgTable('friends', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
   uniqPair: uniqueIndex('friends_user_friend_idx').on(table.userId, table.friendId),
+}));
+
+// ─── Notifications (top-bar bell; created by server events such as "added you as a friend") ──
+// Created with raw SQL (see notifications endpoints), timestamptz so it reads back as UTC.
+
+export const notifications = pgTable('notifications', {
+  id:        serial('id').primaryKey(),
+  userId:    uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text:      text('text').notNull(),
+  read:      boolean('read').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  byUser: index('notifications_user_idx').on(table.userId),
 }));
 
 // ─── Beatmaps ─────────────────────────────────────────────────────────────────
