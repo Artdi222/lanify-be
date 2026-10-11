@@ -1,3 +1,13 @@
+---
+title: Lany API
+emoji: 🎵
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 3000
+pinned: false
+---
+
 # Lany Backend
 
 Lanify Backend is a REST API for a web-based rhythm game. It is built with Bun, Elysia, Drizzle ORM, and PostgreSQL.
@@ -67,6 +77,21 @@ bun run dev
 The server starts at `http://localhost:3000` with hot-reload.
 
 ---
+
+## Deploy (Hugging Face Spaces, free, no card)
+
+The YAML block at the top of this README is the Space config (`sdk: docker`, `app_port: 3000`); the `Dockerfile`
+is used as-is.
+
+1. huggingface.co > **New Space** > SDK **Docker** (Blank) > hardware **CPU basic (free)**.
+2. Space **Settings > Variables and secrets**: add `DATABASE_URL` (Supabase *pooler* URL; if it cannot connect, use
+   port 6543), `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`,
+   `FRONTEND_URL` as **secrets**.
+3. Push this repo to the Space: `git remote add space https://huggingface.co/spaces/<user>/<space>` then
+   `git push space main` (use a write access token as the password).
+4. The API is served at `https://<user>-<space>.hf.space`; set the frontend `NEXT_PUBLIC_API_URL` to it.
+
+A free Space sleeps after 48 hours without traffic and takes a while to wake on the next request.
 
 ## Deploy (Render, free plan)
 
