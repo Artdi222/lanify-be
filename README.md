@@ -1,13 +1,3 @@
----
-title: Lany API
-emoji: 🎵
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 3000
-pinned: false
----
-
 # Lany Backend
 
 Lany Backend is a REST API for a web-based rhythm game. It is built with Bun, Elysia, Drizzle ORM, and PostgreSQL.
@@ -78,36 +68,20 @@ The server starts at `http://localhost:3000` with hot-reload.
 
 ---
 
-## Deploy (Hugging Face Spaces, free, no card)
+## Deploy (Railway)
 
-The YAML block at the top of this README is the Space config (`sdk: docker`, `app_port: 3000`); the `Dockerfile`
-is used as-is.
+Railway builds the `Dockerfile` (Bun 1.3, installs from `bun.lock`); `railway.json` sets the builder and the `/`
+health check. Railway provides `PORT` itself.
 
-1. huggingface.co > **New Space** > SDK **Docker** (Blank) > hardware **CPU basic (free)**.
-2. Space **Settings > Variables and secrets**: add `DATABASE_URL` (Supabase *pooler* URL; if it cannot connect, use
-   port 6543), `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`,
-   `FRONTEND_URL` as **secrets**.
-3. Push this repo to the Space: `git remote add space https://huggingface.co/spaces/<user>/<space>` then
-   `git push space main` (use a write access token as the password).
-4. The API is served at `https://<user>-<space>.hf.space`; set the frontend `NEXT_PUBLIC_API_URL` to it.
-
-A free Space sleeps after 48 hours without traffic and takes a while to wake on the next request.
-
-## Deploy (Render, free plan)
-
-The repo ships a `Dockerfile` (Bun 1.3, installs from `bun.lock`). `render.yaml` describes the same service as a
-Blueprint, but Blueprints ask for a card, so the manual route below is the free one.
-
-1. Push this repo to GitHub, then in Render choose **New > Web Service**, pick the repo, runtime **Docker**,
-   instance type **Free**, health check path `/`.
-2. Add the environment variables (Add from .env works): `DATABASE_URL`, `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`,
+1. railway.com > **New Project > Deploy from GitHub repo** > pick this repo.
+2. Service **Variables**: add `DATABASE_URL`, `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`,
    `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`, and `FRONTEND_URL` (the deployed frontend origin, e.g.
-   `https://lany.vercel.app`; comma-separate several). Render provides `PORT` itself.
-3. In the frontend deployment set `NEXT_PUBLIC_API_URL` to the Render URL (e.g. `https://lany-api.onrender.com`).
+   `https://lany.vercel.app`; comma-separate several). The *Raw Editor* accepts the contents of `.env`.
+3. Service **Settings > Networking > Generate Domain** gives the public URL (e.g. `https://lany-api.up.railway.app`).
+   Set the frontend `NEXT_PUBLIC_API_URL` to it.
 
-Free-plan behaviour: the service sleeps after 15 minutes without requests and takes about a minute to wake.
-Player activity ("Choosing a beatmap", ...) is kept in memory and resets when it sleeps; online status itself
-comes from `users.last_seen_at`, so it survives.
+Player activity ("Choosing a beatmap", ...) is kept in memory and resets on restart; online status itself comes
+from `users.last_seen_at`.
 
 ## API Endpoints
 
