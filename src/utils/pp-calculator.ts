@@ -56,6 +56,17 @@ export function buildScoreInfo(
 }
 
 /**
+ * chart_difficulty only caches NM/DT/HT(+HD) rows. Star rating depends on the rate alone (NC = DT; EZ/HD/NF/SD
+ * change nothing), so the row is looked up by speed; EZ only widens the great window (x1.4, as the library does).
+ */
+function cacheKey(acronyms: string[]): string {
+  if (acronyms.includes('DT') || acronyms.includes('NC')) return 'DT';
+  if (acronyms.includes('HT')) return 'HT';
+  return 'NM';
+}
+const greatWindow = (cached: number, acronyms: string[]) => (acronyms.includes('EZ') ? cached * 1.4 : cached);
+
+/**
  * Calculates Performance Points (PP) for a given score.
  * Fetches precomputed difficulty attributes from the database cache.
  */
@@ -67,9 +78,7 @@ export async function calculatePp(
   const ruleset = new ManiaRuleset();
   const mods = ruleset.createModCombination(modsString || '');
   
-  // Mod combination acronyms are typically sorted alphabetically internally,
-  // but to be safe, we query based on the normalized acronyms joined.
-  const normalizedMods = mods.acronyms.join('');
+  const normalizedMods = cacheKey(mods.acronyms);
 
   // Find cached difficulty attributes
   const [cachedAttrs] = await db
@@ -92,7 +101,7 @@ export async function calculatePp(
 
   // Construct difficulty attributes
   const attributes = new ManiaDifficultyAttributes(mods, cachedAttrs.starRating);
-  attributes.greatHitWindow = cachedAttrs.greatHitWindow;
+  attributes.greatHitWindow = greatWindow(cachedAttrs.greatHitWindow, mods.acronyms);
   attributes.maxCombo = cachedAttrs.maxCombo;
 
   // Calculate performance
@@ -119,12 +128,12 @@ export async function calculateMaxPp(
   const [cachedAttrs] = await db
     .select()
     .from(chartDifficulty)
-    .where(and(eq(chartDifficulty.beatmapId, beatmapId), eq(chartDifficulty.mods, mods.acronyms.join(''))))
+    .where(and(eq(chartDifficulty.beatmapId, beatmapId), eq(chartDifficulty.mods, cacheKey(mods.acronyms))))
     .limit(1);
   if (!cachedAttrs) return null;
 
   const attributes = new ManiaDifficultyAttributes(mods, cachedAttrs.starRating);
-  attributes.greatHitWindow = cachedAttrs.greatHitWindow;
+  attributes.greatHitWindow = greatWindow(cachedAttrs.greatHitWindow, mods.acronyms);
   attributes.maxCombo = cachedAttrs.maxCombo;
 
   const count = judgementCount && judgementCount > 0 ? judgementCount : cachedAttrs.maxCombo;

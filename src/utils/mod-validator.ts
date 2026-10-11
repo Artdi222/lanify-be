@@ -39,6 +39,11 @@ export function validateMods(modsString: string): { valid: boolean; error?: stri
     return { valid: false, error: 'HT, DT, and NC are mutually exclusive' };
   }
   
+  // Fail group: NF / SD
+  if (modSet.has('NF') && modSet.has('SD')) {
+    return { valid: false, error: 'NF and SD are mutually exclusive' };
+  }
+
   if (modSet.has('NM')) {
     if (speedCount > 0) {
       return { valid: false, error: 'NM is mutually exclusive with speed-adjusting mods' };
