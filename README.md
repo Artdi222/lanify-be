@@ -70,10 +70,12 @@ The server starts at `http://localhost:3000` with hot-reload.
 
 ## Deploy (Render, free plan)
 
-The repo ships a `Dockerfile` (Bun 1.3, installs from `bun.lock`) and a `render.yaml` Blueprint.
+The repo ships a `Dockerfile` (Bun 1.3, installs from `bun.lock`). `render.yaml` describes the same service as a
+Blueprint, but Blueprints ask for a card, so the manual route below is the free one.
 
-1. Push this repo to GitHub, then in Render choose **New > Blueprint** and select it.
-2. Fill in the secrets Render asks for: `DATABASE_URL`, `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`,
+1. Push this repo to GitHub, then in Render choose **New > Web Service**, pick the repo, runtime **Docker**,
+   instance type **Free**, health check path `/`.
+2. Add the environment variables (Add from .env works): `DATABASE_URL`, `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`,
    `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`, and `FRONTEND_URL` (the deployed frontend origin, e.g.
    `https://lany.vercel.app`; comma-separate several). Render provides `PORT` itself.
 3. In the frontend deployment set `NEXT_PUBLIC_API_URL` to the Render URL (e.g. `https://lany-api.onrender.com`).
