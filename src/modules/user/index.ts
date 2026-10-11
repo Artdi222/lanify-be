@@ -4,8 +4,21 @@ import { db } from '../../db';
 import { users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
+import { uploadFile } from '../../storage/b2';
+import crypto from 'crypto';
 
 const PAGE_SIZE = 50;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Image type from magic bytes; null for anything that is not JPEG/PNG/WebP/GIF. */
+export function imageType(b: Uint8Array): { mime: string; ext: string } | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' };
+  if (b[0] === 0x89 && ascii(1, 4) === 'PNG') return { mime: 'image/png', ext: 'png' };
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return { mime: 'image/webp', ext: 'webp' };
+  if (ascii(0, 4) === 'GIF8') return { mime: 'image/gif', ext: 'gif' };
+  return null;
+}
 const rowsOf = (res: unknown) => ((res as any).rows ?? res) as any[];
 
 export const userModule = new Elysia({ prefix: '/users' })
@@ -117,6 +130,33 @@ export const userModule = new Elysia({ prefix: '/users' })
     { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
   )
   .use(authMiddleware)
+  // ── POST /users/me/image — avatar/banner upload for any signed-in user ──
+  // (/beatmaps/upload is admin-only.) The type is read from the file's magic bytes, not the client's header,
+  // so nothing but a raster image (no SVG/HTML) is ever stored and later served back from this origin.
+  .post(
+    '/me/image',
+    async ({ body, user, set }) => {
+      const buffer = Buffer.from(await body.file.arrayBuffer());
+      const type = imageType(buffer);
+      if (!type) {
+        set.status = 400;
+        return errorResponse('Only JPEG, PNG, WebP or GIF images are allowed');
+      }
+      if (buffer.length > MAX_IMAGE_BYTES) {
+        set.status = 400;
+        return errorResponse('Image must be 5 MB or smaller');
+      }
+      const hash = crypto.createHash('md5').update(buffer).digest('hex').substring(0, 12);
+      try {
+        const filePath = await uploadFile(`avatars/${user.id}-${hash}.${type.ext}`, buffer, type.mime);
+        return successResponse({ filePath });
+      } catch (err: any) {
+        set.status = 500;
+        return errorResponse(`Upload failed: ${err.message}`);
+      }
+    },
+    { body: t.Object({ file: t.File() }) },
+  )
   .put(
     '/me',
     async ({ body, user, set }) => {
