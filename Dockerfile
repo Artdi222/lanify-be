@@ -1,20 +1,16 @@
-# Stage 1: Install dependencies using node (for network/registry compatibility & stability)
-FROM node:20-slim AS builder
+# Lany API (Elysia on Bun). Render builds this image; PORT is provided by the platform.
+FROM oven/bun:1.3-alpine
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+# Install from the lockfile so the server runs the same package versions as local development.
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
 
-# Stage 2: Run with Bun
-FROM oven/bun:1.2-alpine AS runner
-WORKDIR /app
+COPY src ./src
 
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY ./src ./src
-
+ENV NODE_ENV=production
 ENV PORT=3000
-ENV IS_DOCKER=true
 EXPOSE 3000
+USER bun
 
 CMD ["bun", "run", "src/index.ts"]

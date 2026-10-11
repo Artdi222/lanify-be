@@ -1,4 +1,4 @@
-# Lanify Backend
+# Lany Backend
 
 Lanify Backend is a REST API for a web-based rhythm game. It is built with Bun, Elysia, Drizzle ORM, and PostgreSQL.
 
@@ -67,6 +67,20 @@ bun run dev
 The server starts at `http://localhost:3000` with hot-reload.
 
 ---
+
+## Deploy (Render, free plan)
+
+The repo ships a `Dockerfile` (Bun 1.3, installs from `bun.lock`) and a `render.yaml` Blueprint.
+
+1. Push this repo to GitHub, then in Render choose **New > Blueprint** and select it.
+2. Fill in the secrets Render asks for: `DATABASE_URL`, `JWT_SECRET`, `B2_ENDPOINT`, `B2_APPLICATION_KEY_ID`,
+   `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`, and `FRONTEND_URL` (the deployed frontend origin, e.g.
+   `https://lany.vercel.app`; comma-separate several). Render provides `PORT` itself.
+3. In the frontend deployment set `NEXT_PUBLIC_API_URL` to the Render URL (e.g. `https://lany-api.onrender.com`).
+
+Free-plan behaviour: the service sleeps after 15 minutes without requests and takes about a minute to wake.
+Player activity ("Choosing a beatmap", ...) is kept in memory and resets when it sleeps; online status itself
+comes from `users.last_seen_at`, so it survives.
 
 ## API Endpoints
 
