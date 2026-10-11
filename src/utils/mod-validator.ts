@@ -1,5 +1,5 @@
 /**
- * Supported mods in Lanify:
+ * Supported mods in Lany:
  * EZ, NF, HT, DT, NC, SD, HD, NM
  * (HR, FI, FL, MR, RN, CN are unsupported and should be rejected)
  */
