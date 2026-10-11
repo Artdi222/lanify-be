@@ -10,7 +10,7 @@ pinned: false
 
 # Lany Backend
 
-Lanify Backend is a REST API for a web-based rhythm game. It is built with Bun, Elysia, Drizzle ORM, and PostgreSQL.
+Lany Backend is a REST API for a web-based rhythm game. It is built with Bun, Elysia, Drizzle ORM, and PostgreSQL.
 
 ## Tech Stack
 
