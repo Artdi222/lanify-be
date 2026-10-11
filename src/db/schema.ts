@@ -61,6 +61,19 @@ export const notifications = pgTable('notifications', {
   byUser: index('notifications_user_idx').on(table.userId),
 }));
 
+// ─── Direct messages (chat overlay; polled by the client while open) ──────────
+
+export const messages = pgTable('messages', {
+  id:          serial('id').primaryKey(),
+  senderId:    uuid('sender_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  recipientId: uuid('recipient_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text:        text('text').notNull(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  byPair: index('messages_pair_idx').on(table.senderId, table.recipientId),
+  byRecipient: index('messages_recipient_idx').on(table.recipientId),
+}));
+
 // ─── Beatmaps ─────────────────────────────────────────────────────────────────
 
 export const beatmaps = pgTable('beatmaps', {

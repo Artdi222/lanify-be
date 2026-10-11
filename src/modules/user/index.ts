@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { friends, notifications, users } from '../../db/schema';
+import { friends, messages, notifications, users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { uploadFile } from '../../storage/b2';
@@ -251,6 +251,50 @@ export const userModule = new Elysia({ prefix: '/users' })
       return successResponse({ ok: true });
     },
     { params: t.Object({ id: t.Numeric() }) },
+  )
+  // ── Direct messages ──
+  // Conversations: everyone I have messaged or been messaged by, most recent first.
+  .get('/me/chats', async ({ user }) => {
+    const res = await db.execute(sql`
+      SELECT u.id, u.username, u.avatar_url AS "avatarUrl", c.last_id AS "lastId"
+      FROM (
+        SELECT CASE WHEN sender_id = ${user.id} THEN recipient_id ELSE sender_id END AS other, MAX(id) AS last_id
+        FROM messages WHERE sender_id = ${user.id} OR recipient_id = ${user.id}
+        GROUP BY 1
+      ) c JOIN users u ON u.id = c.other
+      ORDER BY c.last_id DESC
+    `);
+    return successResponse(rowsOf(res));
+  })
+  // Newest 100 with one user, or only those after `after` (the client polls with its last id).
+  .get(
+    '/me/chats/:id',
+    async ({ params, query, user }) => {
+      const pair = sql`((sender_id = ${user.id} AND recipient_id = ${params.id}) OR (sender_id = ${params.id} AND recipient_id = ${user.id}))`;
+      const res = await db.execute(sql`
+        SELECT * FROM (
+          SELECT id, sender_id AS "senderId", text, to_json(created_at)#>>'{}' AS "createdAt"
+          FROM messages WHERE ${pair} AND id > ${query.after ?? 0}
+          ORDER BY id DESC LIMIT 100
+        ) m ORDER BY id
+      `);
+      return successResponse(rowsOf(res));
+    },
+    { params: t.Object({ id: t.String({ format: 'uuid' }) }), query: t.Object({ after: t.Optional(t.Numeric()) }) },
+  )
+  .post(
+    '/me/chats/:id',
+    async ({ params, body, user, set }) => {
+      const text = body.text.trim();
+      if (!text || params.id === user.id) {
+        set.status = 400;
+        return errorResponse('Empty message');
+      }
+      const [row] = await db.insert(messages).values({ senderId: user.id, recipientId: params.id, text })
+        .returning({ id: messages.id, senderId: messages.senderId, text: messages.text, createdAt: messages.createdAt });
+      return successResponse(row);
+    },
+    { params: t.Object({ id: t.String({ format: 'uuid' }) }), body: t.Object({ text: t.String({ minLength: 1, maxLength: 1000 }) }) },
   )
   // ── POST /users/me/image — avatar/banner upload for any signed-in user ──
   // (/beatmaps/upload is admin-only.) The type is read from the file's magic bytes, not the client's header,
