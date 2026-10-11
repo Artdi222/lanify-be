@@ -292,6 +292,13 @@ export const userModule = new Elysia({ prefix: '/users' })
       }
       const [row] = await db.insert(messages).values({ senderId: user.id, recipientId: params.id, text })
         .returning({ id: messages.id, senderId: messages.senderId, text: messages.text, createdAt: messages.createdAt });
+      // One bell entry per sender until it is read or dismissed, so a burst of messages does not flood it.
+      const note = `New message from ${user.username}.`;
+      await db.execute(sql`
+        INSERT INTO notifications (user_id, text)
+        SELECT ${params.id}, ${note}
+        WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE user_id = ${params.id} AND text = ${note} AND NOT read)
+      `);
       return successResponse(row);
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }), body: t.Object({ text: t.String({ minLength: 1, maxLength: 1000 }) }) },
