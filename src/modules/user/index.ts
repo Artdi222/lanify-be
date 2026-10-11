@@ -232,8 +232,13 @@ export const userModule = new Elysia({ prefix: '/users' })
   )
   // ── Notifications (newest 50; the bell badge counts the unread ones) ──
   .get('/me/notifications', async ({ user }) => {
-    const rows = await db.select({ id: notifications.id, text: notifications.text, read: notifications.read, createdAt: notifications.createdAt })
-      .from(notifications).where(eq(notifications.userId, user.id)).orderBy(sql`${notifications.id} DESC`).limit(50);
+    const rows = await db.select({
+      id: notifications.id, text: notifications.text, read: notifications.read, createdAt: notifications.createdAt,
+      chatUser: sql<{ id: string; username: string; avatarUrl: string | null } | null>`CASE WHEN ${users.id} IS NULL THEN NULL
+        ELSE json_build_object('id', ${users.id}, 'username', ${users.username}, 'avatarUrl', ${users.avatarUrl}) END`,
+    })
+      .from(notifications).leftJoin(users, eq(users.id, notifications.chatUserId))
+      .where(eq(notifications.userId, user.id)).orderBy(sql`${notifications.id} DESC`).limit(50);
     return successResponse(rows);
   })
   .post('/me/notifications/read', async ({ user }) => {
@@ -295,9 +300,9 @@ export const userModule = new Elysia({ prefix: '/users' })
       // One bell entry per sender until it is read or dismissed, so a burst of messages does not flood it.
       const note = `New message from ${user.username}.`;
       await db.execute(sql`
-        INSERT INTO notifications (user_id, text)
-        SELECT ${params.id}, ${note}
-        WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE user_id = ${params.id} AND text = ${note} AND NOT read)
+        INSERT INTO notifications (user_id, text, chat_user_id)
+        SELECT ${params.id}, ${note}, ${user.id}
+        WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE user_id = ${params.id} AND chat_user_id = ${user.id} AND NOT read)
       `);
       return successResponse(row);
     },

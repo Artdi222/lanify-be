@@ -56,6 +56,8 @@ export const notifications = pgTable('notifications', {
   userId:    uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   text:      text('text').notNull(),
   read:      boolean('read').notNull().default(false),
+  // Set for direct-message notifications: clicking the entry opens the chat with this user.
+  chatUserId: uuid('chat_user_id').references(() => users.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   byUser: index('notifications_user_idx').on(table.userId),
