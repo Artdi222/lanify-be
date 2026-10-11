@@ -12,7 +12,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 // ponytail: activity ("Choosing a beatmap", ...) lives in memory only; it is lost on restart and not shared across
 // instances. The DB keeps last_seen_at, which is what "online" is decided from. Move to Redis if the API scales out.
-const presence = new Map<string, string>();
+const presence = new Map<string, { activity: string; status: 'online' | 'dnd' | 'offline' }>();
 const ACTIVITIES = new Set(['Idle', 'Choosing a beatmap', 'Smashing keys', 'Browsing', 'Watching a replay']);
 
 /** Columns of a dashboard user card. `me` adds whether that user follows back (mutual). */
@@ -24,7 +24,10 @@ const cardColumns = sql`u.id, u.username, u.avatar_url AS "avatarUrl", u.banner_
 
 function toCard(row: any) {
   const lastSeenAt = row.lastSeenAt ? new Date(String(row.lastSeenAt).replace(' ', 'T').replace(/\+00$/, 'Z')).toISOString() : null;
-  return { ...row, lastSeenAt, activity: row.online ? presence.get(row.id) ?? 'Idle' : null };
+  const p = presence.get(row.id);
+  // "Appear offline" hides the player even inside the 2-minute window.
+  const online = row.online && p?.status !== 'offline';
+  return { ...row, lastSeenAt, online, status: online ? p?.status ?? 'online' : 'offline', activity: online ? p?.activity ?? 'Idle' : null };
 }
 
 /** Image type from magic bytes; null for anything that is not JPEG/PNG/WebP/GIF. */
@@ -115,7 +118,7 @@ export const userModule = new Elysia({ prefix: '/users' })
       ORDER BY u.last_seen_at DESC
       LIMIT 200
     `);
-    return successResponse(rowsOf(res).map(toCard));
+    return successResponse(rowsOf(res).map(toCard).filter((u) => u.online));
   })
   .get(
     '/:id/scores',
@@ -176,11 +179,20 @@ export const userModule = new Elysia({ prefix: '/users' })
   .post(
     '/me/heartbeat',
     async ({ body, user }) => {
-      presence.set(user.id, ACTIVITIES.has(body.activity ?? '') ? body.activity! : 'Idle');
-      await db.update(users).set({ lastSeenAt: sql`now() AT TIME ZONE 'UTC'` }).where(eq(users.id, user.id));
+      const status = body.status ?? 'online';
+      presence.set(user.id, { activity: ACTIVITIES.has(body.activity ?? '') ? body.activity! : 'Idle', status });
+      // Appear offline: "last seen" stays at the moment the player went invisible.
+      if (status !== 'offline') {
+        await db.update(users).set({ lastSeenAt: sql`now() AT TIME ZONE 'UTC'` }).where(eq(users.id, user.id));
+      }
       return successResponse({ ok: true });
     },
-    { body: t.Object({ activity: t.Optional(t.String({ maxLength: 40 })) }) },
+    {
+      body: t.Object({
+        activity: t.Optional(t.String({ maxLength: 40 })),
+        status: t.Optional(t.Union([t.Literal('online'), t.Literal('dnd'), t.Literal('offline')])),
+      }),
+    },
   )
   // ── Friends (one-way follow; `mutual` = they follow back) ──
   .get('/me/friends', async ({ user }) => {
