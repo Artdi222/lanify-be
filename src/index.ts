@@ -13,7 +13,8 @@ const app = new Elysia()
   // ── Global plugins ────────────────────────────────────────────────────
   .use(cors({
     origin: process.env.FRONTEND_URL
-      ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+      // Browsers send the origin without a trailing slash; tolerate "https://x.app/" typos in the env value.
+      ? process.env.FRONTEND_URL.split(',').map(url => url.trim().replace(/\/+$/, '')).filter(Boolean)
       : true
   }))
 
