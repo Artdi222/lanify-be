@@ -308,6 +308,15 @@ export const userModule = new Elysia({ prefix: '/users' })
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }), body: t.Object({ text: t.String({ minLength: 1, maxLength: 1000 }) }) },
   )
+  // ── Best grade per beatmap (badge on song select difficulty cards): grade of the highest-scoring play ──
+  .get('/me/best-grades', async ({ user }) => {
+    const res = await db.execute(sql`
+      SELECT DISTINCT ON (beatmap_id) beatmap_id AS "beatmapId", rank
+      FROM scores WHERE user_id = ${user.id}
+      ORDER BY beatmap_id, score DESC
+    `);
+    return successResponse(rowsOf(res));
+  })
   // ── Collections ──
   .get('/me/collections', async ({ user }) => {
     const res = await db.execute(sql`
