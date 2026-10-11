@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { users } from '../../db/schema';
+import { friends, users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { uploadFile } from '../../storage/b2';
@@ -9,6 +9,22 @@ import crypto from 'crypto';
 
 const PAGE_SIZE = 50;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const ONLINE_MS = 2 * 60 * 1000;
+
+// ponytail: activity ("Choosing a beatmap", ...) lives in memory only; it is lost on restart and not shared across
+// instances. The DB keeps last_seen_at, which is what "online" is decided from. Move to Redis if the API scales out.
+const presence = new Map<string, string>();
+const ACTIVITIES = new Set(['Idle', 'Choosing a beatmap', 'Smashing keys', 'Browsing', 'Watching a replay']);
+
+/** Columns of a dashboard user card. `me` adds whether that user follows back (mutual). */
+const cardColumns = sql`u.id, u.username, u.avatar_url AS "avatarUrl", u.banner_url AS "bannerUrl", u.country,
+  u.total_pp AS "totalPp", u.last_seen_at AS "lastSeenAt"`;
+
+function toCard(row: any) {
+  const lastSeenAt = row.lastSeenAt ? new Date(row.lastSeenAt) : null;
+  const online = !!lastSeenAt && Date.now() - lastSeenAt.getTime() < ONLINE_MS;
+  return { ...row, online, activity: online ? presence.get(row.id) ?? 'Idle' : null };
+}
 
 /** Image type from magic bytes; null for anything that is not JPEG/PNG/WebP/GIF. */
 export function imageType(b: Uint8Array): { mime: string; ext: string } | null {
@@ -75,6 +91,31 @@ export const userModule = new Elysia({ prefix: '/users' })
       rowsOf(res).map((r, i) => ({ ...r, rank: i + 1, avgPerformance: r.activeUsers ? r.performance / r.activeUsers : 0 })),
     );
   })
+  // ── Dashboard: user search and currently online (public) ──
+  .get(
+    '/search',
+    async ({ query }) => {
+      const q = query.q?.trim();
+      if (!q) return successResponse([]);
+      const res = await db.execute(sql`
+        SELECT ${cardColumns} FROM users u
+        WHERE u.username ILIKE ${'%' + q.replace(/[%_\\]/g, '\\$&') + '%'}
+        ORDER BY u.total_pp DESC, u.username
+        LIMIT 60
+      `);
+      return successResponse(rowsOf(res).map(toCard));
+    },
+    { query: t.Object({ q: t.Optional(t.String({ maxLength: 50 })) }) },
+  )
+  .get('/online', async () => {
+    const res = await db.execute(sql`
+      SELECT ${cardColumns} FROM users u
+      WHERE u.last_seen_at > now() - interval '2 minutes'
+      ORDER BY u.last_seen_at DESC
+      LIMIT 200
+    `);
+    return successResponse(rowsOf(res).map(toCard));
+  })
   .get(
     '/:id/scores',
     async ({ params }) => {
@@ -130,6 +171,47 @@ export const userModule = new Elysia({ prefix: '/users' })
     { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
   )
   .use(authMiddleware)
+  // ── Presence: the client pings every 60 s with what it is doing ──
+  .post(
+    '/me/heartbeat',
+    async ({ body, user }) => {
+      presence.set(user.id, ACTIVITIES.has(body.activity ?? '') ? body.activity! : 'Idle');
+      await db.update(users).set({ lastSeenAt: new Date() }).where(eq(users.id, user.id));
+      return successResponse({ ok: true });
+    },
+    { body: t.Object({ activity: t.Optional(t.String({ maxLength: 40 })) }) },
+  )
+  // ── Friends (one-way follow; `mutual` = they follow back) ──
+  .get('/me/friends', async ({ user }) => {
+    const res = await db.execute(sql`
+      SELECT ${cardColumns},
+        EXISTS (SELECT 1 FROM friends b WHERE b.user_id = u.id AND b.friend_id = ${user.id}) AS mutual
+      FROM friends f JOIN users u ON u.id = f.friend_id
+      WHERE f.user_id = ${user.id}
+      ORDER BY u.last_seen_at DESC NULLS LAST
+    `);
+    return successResponse(rowsOf(res).map(toCard));
+  })
+  .post(
+    '/me/friends/:id',
+    async ({ params, user, set }) => {
+      if (params.id === user.id) {
+        set.status = 400;
+        return errorResponse("You can't add yourself");
+      }
+      await db.insert(friends).values({ userId: user.id, friendId: params.id }).onConflictDoNothing();
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
+  )
+  .delete(
+    '/me/friends/:id',
+    async ({ params, user }) => {
+      await db.delete(friends).where(and(eq(friends.userId, user.id), eq(friends.friendId, params.id)));
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.String({ format: 'uuid' }) }) },
+  )
   // ── POST /users/me/image — avatar/banner upload for any signed-in user ──
   // (/beatmaps/upload is admin-only.) The type is read from the file's magic bytes, not the client's header,
   // so nothing but a raster image (no SVG/HTML) is ever stored and later served back from this origin.

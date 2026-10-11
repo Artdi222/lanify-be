@@ -31,8 +31,19 @@ export const users = pgTable('users', {
   bannerUrl:    text('banner_url'),
   country:      varchar('country', { length: 2 }), // ISO 3166-1 alpha-2, optional
   totalPp:      real('total_pp').notNull().default(0),
+  lastSeenAt:   timestamp('last_seen_at'),            // updated by POST /users/me/heartbeat; online = within 2 min
   createdAt:    timestamp('created_at').notNull().defaultNow(),
 });
+
+// ─── Friends (one-way follow, like osu!; mutual when both rows exist) ─────────
+
+export const friends = pgTable('friends', {
+  userId:    uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  friendId:  uuid('friend_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+  uniqPair: uniqueIndex('friends_user_friend_idx').on(table.userId, table.friendId),
+}));
 
 // ─── Beatmaps ─────────────────────────────────────────────────────────────────
 
