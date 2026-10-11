@@ -153,8 +153,12 @@ export const beatmapModule = new Elysia()
           return errorResponse('Beatmap not found');
         }
 
+        // Behind a proxy (Railway) the request reaches us as plain http; use the client-facing scheme/host,
+        // otherwise an https page gets an http URL and the browser blocks it as mixed content.
         const url = new URL(request.url);
-        const proxyUrl = `${url.origin}/beatmaps/${params.id}/download`;
+        const proto = request.headers.get('x-forwarded-proto')?.split(',')[0].trim() || url.protocol.slice(0, -1);
+        const host = request.headers.get('x-forwarded-host') || url.host;
+        const proxyUrl = `${proto}://${host}/beatmaps/${params.id}/download`;
         return successResponse({ url: proxyUrl, expiresIn: 3600 });
       },
       {
