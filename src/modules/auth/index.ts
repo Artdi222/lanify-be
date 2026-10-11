@@ -115,6 +115,8 @@ export const authModule = new Elysia({ prefix: '/auth' })
           email:     user.email,
           role:      user.role,
           avatarUrl: user.avatarUrl,
+          bannerUrl: user.bannerUrl,
+          country:   user.country,
           createdAt: user.createdAt,
         },
         token,
@@ -138,6 +140,8 @@ export const authModule = new Elysia({ prefix: '/auth' })
         email:     users.email,
         role:      users.role,
         avatarUrl: users.avatarUrl,
+        bannerUrl: users.bannerUrl,
+        country:   users.country,
         createdAt: users.createdAt,
       })
       .from(users)

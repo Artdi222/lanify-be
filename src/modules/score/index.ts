@@ -106,23 +106,7 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
   .post(
     '',
     async ({ body, user, set }) => {
-      // 1. Verify beatmap exists and get note counts
-      const [beatmap] = await db
-        .select({ 
-          id: beatmaps.id,
-          noteCount: beatmaps.noteCount,
-          holdCount: beatmaps.holdCount,
-        })
-        .from(beatmaps)
-        .where(eq(beatmaps.id, body.beatmapId))
-        .limit(1);
-
-      if (!beatmap) {
-        set.status = 404;
-        return errorResponse('Beatmap not found');
-      }
-
-      // 2. Validate mods
+      // 2. Validate mods (before any query)
       const modCheck = validateMods(body.mods || '');
       if (!modCheck.valid) {
         set.status = 400;
@@ -135,7 +119,29 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
       const good      = body.good ?? 0;
       const bad       = body.bad ?? 0;
       const miss      = body.miss ?? 0;
-      
+
+      // 1 + 5. Beatmap lookup and PP (only needs the beatmap id) in parallel: each DB round trip is ~0.4 s.
+      const scoreInfo = buildScoreInfo(
+        marvelous, perfect, great, good, bad, miss, body.maxCombo, body.score
+      );
+      const [[beatmap], pp] = await Promise.all([
+        db
+          .select({
+            id: beatmaps.id,
+            noteCount: beatmaps.noteCount,
+            holdCount: beatmaps.holdCount,
+          })
+          .from(beatmaps)
+          .where(eq(beatmaps.id, body.beatmapId))
+          .limit(1),
+        calculatePp(body.beatmapId, body.mods || '', scoreInfo),
+      ]);
+
+      if (!beatmap) {
+        set.status = 404;
+        return errorResponse('Beatmap not found');
+      }
+
       const totalJudgements = marvelous + perfect + great + good + bad + miss;
 
       // 3. Basic validation against beatmap object count
@@ -153,17 +159,9 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
       );
       const rank = calculateRank(accuracy);
 
-      // 5. Calculate PP
-      const scoreInfo = buildScoreInfo(
-        marvelous, perfect, great, good, bad, miss, body.maxCombo, body.score
-      );
-      
-      const pp = await calculatePp(beatmap.id, body.mods || '', scoreInfo);
-
-      let newScore;
-      await db.transaction(async (tx) => {
-        // Insert score
-        const [inserted] = await tx
+      // ponytail: no transaction (BEGIN/COMMIT = 2 more round trips). Play count and total PP are derived values;
+      // total PP is recomputed from all scores on every submit, so a failed update heals on the next one.
+      const [newScore] = await db
           .insert(scores)
           .values({
             userId:    user.id,
@@ -184,41 +182,32 @@ export const scoreModule = new Elysia({ prefix: '/scores' })
             rank,
           })
           .returning();
-        
-        newScore = inserted;
-        
-        // Increment play count on beatmap
-        await tx
+
+      await Promise.all([
+        db
           .update(beatmaps)
           .set({ playCount: sql`${beatmaps.playCount} + 1` })
-          .where(eq(beatmaps.id, body.beatmapId));
-          
-        // Recompute user's total PP (weighted top-N)
-        // Note: we only count scores set on 'ranked' maps for PP.
-        const userTopScores = await tx.execute(sql`
-          SELECT s.pp
-          FROM (
-            SELECT DISTINCT ON (beatmap_id) pp
-            FROM scores
-            INNER JOIN beatmaps b ON scores.beatmap_id = b.id
-            WHERE user_id = ${user.id} AND b.ranked_status = 'ranked'
-            ORDER BY beatmap_id, pp DESC
-          ) s
-          ORDER BY s.pp DESC
-          LIMIT 100
-        `);
-
-        let totalPp = 0;
-        const rows = (userTopScores as any).rows ?? userTopScores;
-        rows.forEach((row: any, i: number) => {
-          totalPp += row.pp * Math.pow(0.95, i);
-        });
-
-        await tx
-          .update(users)
-          .set({ totalPp })
-          .where(eq(users.id, user.id));
-      });
+          .where(eq(beatmaps.id, body.beatmapId)),
+        // Total PP = weighted top 100 (best per ranked beatmap, 0.95^i), computed in the same statement.
+        db.execute(sql`
+          UPDATE users SET total_pp = COALESCE((
+            SELECT SUM(t.pp * POWER(0.95, t.rn - 1))
+            FROM (
+              SELECT s.pp, ROW_NUMBER() OVER (ORDER BY s.pp DESC) AS rn
+              FROM (
+                SELECT DISTINCT ON (beatmap_id) pp
+                FROM scores
+                INNER JOIN beatmaps b ON scores.beatmap_id = b.id
+                WHERE user_id = ${user.id} AND b.ranked_status = 'ranked'
+                ORDER BY beatmap_id, pp DESC
+              ) s
+              ORDER BY s.pp DESC
+              LIMIT 100
+            ) t
+          ), 0)
+          WHERE id = ${user.id}
+        `),
+      ]);
 
       return successResponse(newScore);
     },
