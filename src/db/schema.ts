@@ -104,6 +104,24 @@ export const beatmaps = pgTable('beatmaps', {
   createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
 
+// ─── Collections (per-player beatmap lists, filter in song select) ───────────
+
+export const collections = pgTable('collections', {
+  id:        serial('id').primaryKey(),
+  userId:    uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name:      varchar('name', { length: 50 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  byUser: index('collections_user_idx').on(table.userId),
+}));
+
+export const collectionBeatmaps = pgTable('collection_beatmaps', {
+  collectionId: integer('collection_id').notNull().references(() => collections.id, { onDelete: 'cascade' }),
+  beatmapId:    uuid('beatmap_id').notNull().references(() => beatmaps.id, { onDelete: 'cascade' }),
+}, (table) => ({
+  uniqPair: uniqueIndex('collection_beatmaps_pair_idx').on(table.collectionId, table.beatmapId),
+}));
+
 // ─── Scores ───────────────────────────────────────────────────────────────────
 
 export const scores = pgTable('scores', {

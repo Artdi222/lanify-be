@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { friends, messages, notifications, users } from '../../db/schema';
+import { collectionBeatmaps, collections, friends, messages, notifications, users } from '../../db/schema';
 import { successResponse, errorResponse } from '../../types';
 import { authMiddleware } from '../../middleware/auth';
 import { uploadFile } from '../../storage/b2';
@@ -307,6 +307,61 @@ export const userModule = new Elysia({ prefix: '/users' })
       return successResponse(row);
     },
     { params: t.Object({ id: t.String({ format: 'uuid' }) }), body: t.Object({ text: t.String({ minLength: 1, maxLength: 1000 }) }) },
+  )
+  // ── Collections ──
+  .get('/me/collections', async ({ user }) => {
+    const res = await db.execute(sql`
+      SELECT c.id, c.name, COALESCE(json_agg(cb.beatmap_id) FILTER (WHERE cb.beatmap_id IS NOT NULL), '[]') AS "beatmapIds"
+      FROM collections c LEFT JOIN collection_beatmaps cb ON cb.collection_id = c.id
+      WHERE c.user_id = ${user.id}
+      GROUP BY c.id ORDER BY c.name
+    `);
+    return successResponse(rowsOf(res));
+  })
+  .post(
+    '/me/collections',
+    async ({ body, user, set }) => {
+      const name = body.name.trim();
+      if (!name) {
+        set.status = 400;
+        return errorResponse('Name required');
+      }
+      const [row] = await db.insert(collections).values({ userId: user.id, name }).returning({ id: collections.id, name: collections.name });
+      return successResponse({ ...row, beatmapIds: [] });
+    },
+    { body: t.Object({ name: t.String({ minLength: 1, maxLength: 50 }) }) },
+  )
+  .delete(
+    '/me/collections/:id',
+    async ({ params, user }) => {
+      await db.delete(collections).where(and(eq(collections.id, params.id), eq(collections.userId, user.id)));
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.Numeric() }) },
+  )
+  // Add/remove a beatmap; the collection must belong to the caller (checked in the same statement).
+  .post(
+    '/me/collections/:id/beatmaps/:beatmapId',
+    async ({ params, user }) => {
+      await db.execute(sql`
+        INSERT INTO collection_beatmaps (collection_id, beatmap_id)
+        SELECT id, ${params.beatmapId} FROM collections WHERE id = ${params.id} AND user_id = ${user.id}
+        ON CONFLICT DO NOTHING
+      `);
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.Numeric(), beatmapId: t.String({ format: 'uuid' }) }) },
+  )
+  .delete(
+    '/me/collections/:id/beatmaps/:beatmapId',
+    async ({ params, user }) => {
+      await db.execute(sql`
+        DELETE FROM collection_beatmaps cb USING collections c
+        WHERE cb.collection_id = c.id AND c.id = ${params.id} AND c.user_id = ${user.id} AND cb.beatmap_id = ${params.beatmapId}
+      `);
+      return successResponse({ ok: true });
+    },
+    { params: t.Object({ id: t.Numeric(), beatmapId: t.String({ format: 'uuid' }) }) },
   )
   // ── POST /users/me/image — avatar/banner upload for any signed-in user ──
   // (/beatmaps/upload is admin-only.) The type is read from the file's magic bytes, not the client's header,
